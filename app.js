@@ -206,13 +206,9 @@
     if (!m) m = full.match(/Certificate\s*(?:No|Number)\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9\/\-]{4,})/i);
     rec["Policy Number"] = m ? m[1].trim() : "";
 
-    // --- Policyholder --- capture the name on the SAME line as the label
-    // (do not cross the newline into the address), else use the salutation.
-    m = full.match(/Policy\s*Holder(?:'?s)?(?:\s*Name)?[ \t]*[:\-]?[ \t]*([A-Z][A-Za-z]+(?:[ \t]+[A-Z][A-Za-z.]+){0,5})/);
-    if (!m) m = full.match(/Proposer(?:'?s)?\s*Name[ \t]*[:\-]?[ \t]*([A-Z][A-Za-z]+(?:[ \t]+[A-Z][A-Za-z.]+){0,5})/);
-    if (!m) m = full.match(/Insured\s*Name[ \t]*[:\-]?[ \t]*([A-Z][A-Za-z]+(?:[ \t]+[A-Z][A-Za-z.]+){0,5})/);
-    if (!m) m = full.match(/Dear[ \t]+([A-Z][A-Za-z]+(?:[ \t]+[A-Z][A-Za-z.]+){0,5})[ \t]*,/);
-    rec["Policyholder"] = m ? m[1].replace(/\s+/g, " ").trim() : "";
+    // --- Policyholder --- resolved per-line (robust against cross-line
+    // false matches such as grabbing "Co" from "...Insurance Co. Limited").
+    rec["Policyholder"] = extractPolicyholder(lineArr);
 
     // --- Policy Expiry Date & Time -> DD-MM-YYYY HH:MM ---
     m = full.match(/Policy\s*Expiry\s*Date\s*(?:and|&)?\s*Time\s*[:\-]?\s*(\d{2})[\/\-.](\d{2})[\/\-.](\d{4})\s*(\d{2}):(\d{2})/i);
@@ -281,6 +277,57 @@
     rec["Insured Person(s) Age"] = extractAges(pages, full);
 
     return rec;
+  }
+
+  // ============================================================
+  //  Policyholder name resolution (line-based)
+  //  The name is read from a single reconstructed line so a stray line
+  //  break can never splice the label onto unrelated text. Junk tokens
+  //  (Co, Date, Customer, ...) are rejected, and the clean "Dear <NAME>,"
+  //  salutation is used as a reliable fallback.
+  // ============================================================
+  function extractPolicyholder(lineArr) {
+    var BAD = /^(?:Co|Co\.|Date|Customer|Limited|Ltd|Address|Name|Holder|Policy|The|For|Dear|Mobile|Nominee|Insured|Total|Premium|No|Sri|Details|Number)$/i;
+    var NAMECAP = /([A-Z][A-Za-z.]*(?:\s+[A-Z][A-Za-z.]*){0,5})/;
+
+    function clean(s) {
+      if (!s) return "";
+      s = s.replace(/\s+/g, " ").replace(/[\s,]+$/, "").trim();
+      s = s.split(/\s+(?:Date\s*of\s*Birth|Customer\s*ID|Address|DOB|Relationship)\b/i)[0].trim();
+      return s;
+    }
+    function valid(n) {
+      if (!n) return false;
+      var t = n.trim();
+      if (t.length < 2) return false;
+      if (BAD.test(t.split(" ")[0])) return false;
+      return /[A-Za-z]{2,}/.test(t);
+    }
+    function pick(line, re) {
+      var mm = line.match(re);
+      if (!mm) return "";
+      var c = clean(mm[1]);
+      var nm = c.match(NAMECAP);
+      return nm && valid(nm[1]) ? nm[1].trim() : "";
+    }
+
+    var i, v;
+    // 1) Explicit "Policy Holder" label (capital H) with value on same line.
+    for (i = 0; i < lineArr.length; i++) {
+      v = pick(lineArr[i], /Policy\s*Holder(?:'?s)?(?:\s*Name)?\s*[:\-]?\s+(.+)$/);
+      if (v) return v;
+    }
+    // 2) Salutation "Dear <NAME>,".
+    for (i = 0; i < lineArr.length; i++) {
+      v = pick(lineArr[i], /\bDear\s+(.+?)\s*,/);
+      if (v) return v;
+    }
+    // 3) Proposer / Insured name labels.
+    for (i = 0; i < lineArr.length; i++) {
+      v = pick(lineArr[i], /(?:Proposer(?:'?s)?\s*Name|Insured\s*Name)\s*[:\-]?\s+(.+)$/i);
+      if (v) return v;
+    }
+    return "";
   }
 
   // ============================================================
