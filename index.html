@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Health Insurance Policy Extractor</title>
+<!-- PDF parsing + Excel export libraries (loaded from CDN; needs internet in your browser) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --text:#2C2C2B; --text2:#7D7A75; --canvas:#FFFFFF; --soft:#F9F8F7;
+    --soft2:#F0EFED; --border:#E6E5E3; --blue:#2783DE; --blue-soft:#E5F2FC;
+    --green:#46A171; --green-soft:#E8F1EC; --orange:#D5803B; --orange-soft:#FBEBDE;
+    --red:#E56458; --red-soft:#FCE9E7;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--soft); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:16px; line-height:1.5;
+  }
+  .wrap{max-width:1120px; margin:0 auto; padding:32px 24px 64px;}
+  header{margin-bottom:24px;}
+  .badge{display:inline-flex; align-items:center; gap:8px; background:var(--blue-soft);
+    color:var(--blue); font-size:13px; font-weight:600; padding:5px 12px; border-radius:999px;}
+  h1{font-size:30px; line-height:1.2; margin:16px 0 6px; letter-spacing:-.01em;}
+  .sub{color:var(--text2); margin:0; max-width:720px;}
+  .card{background:var(--canvas); border:1px solid var(--border); border-radius:12px;}
+  .drop{
+    padding:44px 24px; text-align:center; cursor:pointer; transition:.15s;
+    border:2px dashed var(--border); border-radius:12px; background:var(--canvas);
+  }
+  .drop:hover,.drop.drag{border-color:var(--blue); background:var(--blue-soft);}
+  .drop .ic{font-size:40px; margin-bottom:8px;}
+  .drop h3{margin:0 0 4px; font-size:18px;}
+  .drop p{margin:0; color:var(--text2); font-size:14px;}
+  .drop .browse{color:var(--blue); font-weight:600; text-decoration:underline;}
+  .toolbar{display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:20px 0;}
+  .btn{
+    display:inline-flex; align-items:center; gap:8px; border:1px solid var(--border);
+    background:var(--canvas); color:var(--text); font-size:14px; font-weight:600;
+    padding:11px 18px; border-radius:8px; cursor:pointer; min-height:44px; transition:.15s;
+  }
+  .btn:hover:not(:disabled){background:var(--soft2);}
+  .btn.primary{background:var(--blue); border-color:var(--blue); color:#fff;}
+  .btn.primary:hover:not(:disabled){filter:brightness(.95);}
+  .btn.green{background:var(--green); border-color:var(--green); color:#fff;}
+  .btn.green:hover:not(:disabled){filter:brightness(.95);}
+  .btn:disabled{opacity:.5; cursor:not-allowed;}
+  .spacer{flex:1;}
+  .filelist{display:flex; flex-direction:column; gap:8px; margin-top:16px;}
+  .fileitem{display:flex; align-items:center; gap:12px; padding:10px 14px; border:1px solid var(--border);
+    border-radius:8px; background:var(--soft); font-size:14px;}
+  .fileitem .nm{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .fileitem .st{font-size:12px; font-weight:600; padding:3px 9px; border-radius:999px;}
+  .st.wait{background:var(--soft2); color:var(--text2);}
+  .st.ok{background:var(--green-soft); color:var(--green);}
+  .st.err{background:var(--red-soft); color:var(--red);}
+  .fileitem .rm{cursor:pointer; color:var(--text2); border:none; background:none; font-size:18px; line-height:1;}
+  .status{margin:16px 0; font-size:14px; color:var(--text2); display:none;}
+  .status.show{display:block;}
+  .bar{height:6px; background:var(--soft2); border-radius:999px; overflow:hidden; margin-top:8px;}
+  .bar > i{display:block; height:100%; width:0; background:var(--blue); transition:.2s;}
+  .tablewrap{overflow-x:auto; border:1px solid var(--border); border-radius:12px; margin-top:20px; display:none;}
+  .tablewrap.show{display:block;}
+  table{border-collapse:collapse; width:100%; font-size:13px; min-width:1000px;}
+  th,td{padding:10px 12px; text-align:left; border-bottom:1px solid var(--border); white-space:nowrap;}
+  th{background:var(--soft); font-weight:600; position:sticky; top:0; font-size:12px;
+    text-transform:uppercase; letter-spacing:.03em; color:var(--text2);}
+  tbody tr:hover{background:var(--soft);}
+  td.miss{color:var(--red); font-style:italic;}
+  .note{background:var(--orange-soft); border:1px solid #F0D2B3; color:#8a4f1c; padding:12px 16px;
+    border-radius:8px; font-size:13px; margin-top:16px;}
+  .empty{color:var(--text2); font-size:14px; padding:8px 2px;}
+  footer{margin-top:32px; color:var(--text2); font-size:12px; text-align:center;}
+  @media (max-width:520px){ h1{font-size:24px;} .wrap{padding:24px 16px 48px;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="badge">◉ Policy Data Extractor</span>
+    <h1>Health Insurance Policy → Excel &amp; CSV</h1>
+    <p class="sub">Upload one or many policy PDFs. The tool reads every page, reconstructs tables, extracts the required fields, and lets you download a consolidated Excel or CSV file.</p>
+  </header>
+
+  <div class="drop" id="drop">
+    <div class="ic">☁︎</div>
+    <h3>Drop policy PDFs here</h3>
+    <p>or <span class="browse">browse files</span> · multiple PDFs supported</p>
+    <input type="file" id="file" accept="application/pdf" multiple hidden />
+  </div>
+
+  <div class="filelist" id="filelist"></div>
+
+  <div class="toolbar">
+    <button class="btn primary" id="process" disabled>Extract details</button>
+    <button class="btn" id="clear" disabled>Clear</button>
+    <span class="spacer"></span>
+    <button class="btn green" id="dlxlsx" disabled>↓ Download Excel</button>
+    <button class="btn green" id="dlcsv" disabled>↓ Download CSV</button>
+  </div>
+
+  <div class="status" id="status">
+    <span id="statustext"></span>
+    <div class="bar"><i id="barfill"></i></div>
+  </div>
+
+  <div class="tablewrap" id="tablewrap">
+    <table id="table">
+      <thead><tr id="thead"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>How extraction works:</strong> Values are pulled from tables first (label–value pairs and column layout), then from free text as a fallback. “Insured Person(s) Age” is read from the <strong>AGE</strong> column and joined with commas. If a field can’t be confidently found it is left blank so you can spot-check it.
+  </div>
+
+  <footer>Runs entirely in your browser — no files are uploaded to any server.</footer>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
